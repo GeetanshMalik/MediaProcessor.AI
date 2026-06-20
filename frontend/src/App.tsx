@@ -5,13 +5,23 @@ import { AuthProvider } from './contexts/AuthContext';
 import { ToastProvider } from './contexts/ToastContext';
 import { PublicRoute } from './components/PublicRoute';
 import { ProtectedRoute } from './components/ProtectedRoute';
-import { Home } from './pages/Home';
-import { Login } from './pages/Login';
-import { Register } from './pages/Register';
-import { UploadPage } from './pages/UploadPage';
-import { History } from './pages/History';
-import { DashboardPage } from './pages/DashboardPage';
-import { NotificationsPage } from './pages/NotificationsPage';
+import React, { Suspense } from 'react';
+
+// Lazy-loaded page components for route-level code splitting
+const Home = React.lazy(() => import('./pages/Home'));
+const Login = React.lazy(() => import('./pages/Login'));
+const Register = React.lazy(() => import('./pages/Register'));
+const UploadPage = React.lazy(() => import('./pages/UploadPage'));
+const History = React.lazy(() => import('./pages/History'));
+const DashboardPage = React.lazy(() => import('./pages/DashboardPage'));
+const NotificationsPage = React.lazy(() => import('./pages/NotificationsPage'));
+
+// Minimal inline loading fallback (no spinner, just a gentle fade placeholder)
+const PageLoader = () => (
+  <div className="flex h-screen w-screen items-center justify-center bg-slate-50">
+    <div className="h-8 w-8 animate-spin rounded-full border-4 border-slate-200 border-t-blue-600"></div>
+  </div>
+);
 
 // Initialize TanStack React Query client
 const queryClient = new QueryClient({
@@ -29,6 +39,7 @@ function App() {
       <BrowserRouter>
         <ToastProvider>
           <AuthProvider>
+          <Suspense fallback={<PageLoader />}>
           <Routes>
             {/* Public Landing Page */}
             <Route path="/" element={<Home />} />
@@ -88,6 +99,7 @@ function App() {
             {/* Fallback Catch-All */}
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
+          </Suspense>
         </AuthProvider>
         </ToastProvider>
       </BrowserRouter>

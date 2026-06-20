@@ -23,4 +23,18 @@ api.interceptors.request.use(
     return Promise.reject(error);
   }
 );
+
+/**
+ * Keep-alive ping to prevent Render free-tier cold starts.
+ * Pings GET /health every 4 minutes. The endpoint is lightweight and returns { status: 'ok' }.
+ * Only runs in production to avoid noise during local development.
+ */
+if (import.meta.env.PROD) {
+  setInterval(() => {
+    api.get('/health').catch(() => {
+      // Silently ignore — this is a background keep-alive, not user-facing
+    });
+  }, 4 * 60 * 1000); // Every 4 minutes
+}
+
 export default api;

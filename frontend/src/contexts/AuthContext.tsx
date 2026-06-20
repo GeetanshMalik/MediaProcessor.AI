@@ -13,30 +13,54 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<User | null>(null);
-  const [token, setToken] = useState<string | null>(localStorage.getItem('token'));
-  const [isLoading, setIsLoading] = useState(true);
+/**
+ * Attempt to restore user profile from localStorage for instant render.
+ */
+function getCachedUser(): User | null {
+  try {
+    const cached = localStorage.getItem('user');
+    return cached ? JSON.parse(cached) : null;
+  } catch {
+    return null;
+  }
+}
 
-  // Sync session on load
+export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const storedToken = localStorage.getItem('token');
+  const cachedUser = getCachedUser();
+
+  // If we have both a cached user and token, render immediately (isLoading = false)
+  const [user, setUser] = useState<User | null>(cachedUser);
+  const [token, setToken] = useState<string | null>(storedToken);
+  const [isLoading, setIsLoading] = useState(!cachedUser || !storedToken);
+
+  // Background revalidation — silently verify the token is still valid
   useEffect(() => {
-    async function initAuth() {
-      const storedToken = localStorage.getItem('token');
-      if (storedToken) {
-        try {
-          const response = await api.get<{ user: User }>('/auth/me');
-          setUser(response.data.user);
-          setToken(storedToken);
-        } catch (error) {
-          // Token is invalid or expired
-          localStorage.removeItem('token');
-          setToken(null);
-          setUser(null);
-        }
+    async function revalidate() {
+      const currentToken = localStorage.getItem('token');
+      if (!currentToken) {
+        setUser(null);
+        setToken(null);
+        setIsLoading(false);
+        return;
+      }
+
+      try {
+        const response = await api.get<{ user: User }>('/auth/me');
+        const freshUser = response.data.user;
+        setUser(freshUser);
+        setToken(currentToken);
+        localStorage.setItem('user', JSON.stringify(freshUser));
+      } catch (error) {
+        // Token is invalid or expired — clear everything
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        setToken(null);
+        setUser(null);
       }
       setIsLoading(false);
     }
-    initAuth();
+    revalidate();
   }, []);
 
   const login = async (email: string, password: string) => {
@@ -45,6 +69,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const response = await api.post<AuthResponse>('/auth/login', { email, password });
       const { token: newToken, user: newUser } = response.data;
       localStorage.setItem('token', newToken);
+      localStorage.setItem('user', JSON.stringify(newUser));
       setToken(newToken);
       setUser(newUser);
     } finally {
@@ -58,6 +83,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const response = await api.post<AuthResponse>('/auth/register', { name, email, password });
       const { token: newToken, user: newUser } = response.data;
       localStorage.setItem('token', newToken);
+      localStorage.setItem('user', JSON.stringify(newUser));
       setToken(newToken);
       setUser(newUser);
     } finally {
@@ -67,6 +93,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const logout = () => {
     localStorage.removeItem('token');
+    localStorage.removeItem('user');
     setToken(null);
     setUser(null);
   };
