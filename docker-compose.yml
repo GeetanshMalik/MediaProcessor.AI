@@ -1,0 +1,130 @@
+x-public-dns: &public-dns
+  dns:
+    - 1.1.1.1
+    - 8.8.8.8
+
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: media-processing-db
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres_password
+      POSTGRES_DB: mediadb
+    ports:
+      - "5472:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - media-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: media-processing-redis
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    networks:
+      - media-network
+
+  api:
+    <<: *public-dns
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.api
+    container_name: media-processing-api
+    restart: always
+    ports:
+      - "5000:5000"
+    environment:
+      - PORT=5000
+      - NODE_ENV=development
+      - APP_TIME_ZONE=${APP_TIME_ZONE:-Asia/Kolkata}
+      - DATABASE_URL=postgresql://postgres:postgres_password@db:5432/mediadb?schema=public
+      - REDIS_URL=redis://redis:6379
+      - JWT_SECRET=super_secret_jwt_key_replace_in_prod
+      - STORAGE_PROVIDER=local
+      - UPLOAD_DIR=uploads
+      - CORS_ORIGIN=${CORS_ORIGIN:-*}
+      - HUGGINGFACE_API_KEY=${HUGGINGFACE_API_KEY}
+      - HUGGINGFACE_API_KEY_2=${HUGGINGFACE_API_KEY_2:-}
+      - HUGGINGFACE_API_KEYS=${HUGGINGFACE_API_KEYS:-}
+      - HUGGINGFACE_CAPTION_MODEL=${HUGGINGFACE_CAPTION_MODEL:-meta-llama/Llama-4-Scout-17B-16E-Instruct:groq}
+      - HUGGINGFACE_CAPTION_PROMPT=${HUGGINGFACE_CAPTION_PROMPT:-Describe this image in exactly one detailed sentence. Do not use bullet points, multiple sentences, or line breaks.}
+      - HUGGINGFACE_CAPTION_MAX_TOKENS=${HUGGINGFACE_CAPTION_MAX_TOKENS:-45}
+      - HUGGINGFACE_IMAGE_MAX_EDGE=${HUGGINGFACE_IMAGE_MAX_EDGE:-768}
+      - HUGGINGFACE_IMAGE_QUALITY=${HUGGINGFACE_IMAGE_QUALITY:-78}
+      - HUGGINGFACE_IMAGE_MAX_BYTES=${HUGGINGFACE_IMAGE_MAX_BYTES:-900000}
+      - JOB_STALE_PROCESSING_MINUTES=${JOB_STALE_PROCESSING_MINUTES:-15}
+      - HUGGINGFACE_DETECTION_MODEL=${HUGGINGFACE_DETECTION_MODEL:-facebook/detr-resnet-50}
+      - HUGGINGFACE_DETECTION_THRESHOLD=${HUGGINGFACE_DETECTION_THRESHOLD:-0.5}
+      - HUGGINGFACE_LABEL_MODEL=${HUGGINGFACE_LABEL_MODEL:-meta-llama/Llama-4-Scout-17B-16E-Instruct:groq}
+      - HUGGINGFACE_LABEL_MAX_COUNT=${HUGGINGFACE_LABEL_MAX_COUNT:-6}
+      - HUGGINGFACE_SAFETY_MODEL=${HUGGINGFACE_SAFETY_MODEL:-Falconsai/nsfw_image_detection}
+      - HUGGINGFACE_SAFETY_THRESHOLD=${HUGGINGFACE_SAFETY_THRESHOLD:-0.7}
+      - HUGGINGFACE_SAFETY_REVIEW_MODEL=${HUGGINGFACE_SAFETY_REVIEW_MODEL:-meta-llama/Llama-4-Scout-17B-16E-Instruct:groq}
+      - HUGGINGFACE_SAFETY_REVIEW_THRESHOLD=${HUGGINGFACE_SAFETY_REVIEW_THRESHOLD:-0.5}
+    depends_on:
+      - db
+      - redis
+    volumes:
+      - uploads_volume:/app/uploads
+    networks:
+      - media-network
+
+  worker:
+    <<: *public-dns
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.worker
+    container_name: media-processing-worker
+    restart: always
+    environment:
+      - NODE_ENV=development
+      - APP_TIME_ZONE=${APP_TIME_ZONE:-Asia/Kolkata}
+      - DATABASE_URL=postgresql://postgres:postgres_password@db:5432/mediadb?schema=public
+      - REDIS_URL=redis://redis:6379
+      - JWT_SECRET=super_secret_jwt_key_replace_in_prod
+      - STORAGE_PROVIDER=local
+      - UPLOAD_DIR=uploads
+      - CORS_ORIGIN=${CORS_ORIGIN:-*}
+      - HUGGINGFACE_API_KEY=${HUGGINGFACE_API_KEY}
+      - HUGGINGFACE_API_KEY_2=${HUGGINGFACE_API_KEY_2:-}
+      - HUGGINGFACE_API_KEYS=${HUGGINGFACE_API_KEYS:-}
+      - HUGGINGFACE_CAPTION_MODEL=${HUGGINGFACE_CAPTION_MODEL:-meta-llama/Llama-4-Scout-17B-16E-Instruct:groq}
+      - HUGGINGFACE_CAPTION_PROMPT=${HUGGINGFACE_CAPTION_PROMPT:-Describe this image in exactly one detailed sentence. Do not use bullet points, multiple sentences, or line breaks.}
+      - HUGGINGFACE_CAPTION_MAX_TOKENS=${HUGGINGFACE_CAPTION_MAX_TOKENS:-45}
+      - HUGGINGFACE_IMAGE_MAX_EDGE=${HUGGINGFACE_IMAGE_MAX_EDGE:-768}
+      - HUGGINGFACE_IMAGE_QUALITY=${HUGGINGFACE_IMAGE_QUALITY:-78}
+      - HUGGINGFACE_IMAGE_MAX_BYTES=${HUGGINGFACE_IMAGE_MAX_BYTES:-900000}
+      - JOB_STALE_PROCESSING_MINUTES=${JOB_STALE_PROCESSING_MINUTES:-15}
+      - HUGGINGFACE_DETECTION_MODEL=${HUGGINGFACE_DETECTION_MODEL:-facebook/detr-resnet-50}
+      - HUGGINGFACE_DETECTION_THRESHOLD=${HUGGINGFACE_DETECTION_THRESHOLD:-0.5}
+      - HUGGINGFACE_LABEL_MODEL=${HUGGINGFACE_LABEL_MODEL:-meta-llama/Llama-4-Scout-17B-16E-Instruct:groq}
+      - HUGGINGFACE_LABEL_MAX_COUNT=${HUGGINGFACE_LABEL_MAX_COUNT:-6}
+      - HUGGINGFACE_SAFETY_MODEL=${HUGGINGFACE_SAFETY_MODEL:-Falconsai/nsfw_image_detection}
+      - HUGGINGFACE_SAFETY_THRESHOLD=${HUGGINGFACE_SAFETY_THRESHOLD:-0.7}
+      - HUGGINGFACE_SAFETY_REVIEW_MODEL=${HUGGINGFACE_SAFETY_REVIEW_MODEL:-meta-llama/Llama-4-Scout-17B-16E-Instruct:groq}
+      - HUGGINGFACE_SAFETY_REVIEW_THRESHOLD=${HUGGINGFACE_SAFETY_REVIEW_THRESHOLD:-0.5}
+    depends_on:
+      - db
+      - redis
+    volumes:
+      - uploads_volume:/app/uploads
+    networks:
+      - media-network
+
+volumes:
+  pgdata:
+    driver: local
+  redisdata:
+    driver: local
+  uploads_volume:
+    driver: local
+
+networks:
+  media-network:
+    driver: bridge

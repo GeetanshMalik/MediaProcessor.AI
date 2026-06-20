@@ -1,0 +1,23 @@
+FROM node:20-slim
+
+# Install system dependencies (openssl is required by Prisma)
+RUN apt-get update -y && apt-get install -y openssl
+
+WORKDIR /app
+
+# Install dependencies first for better layer caching
+COPY package*.json ./
+RUN npm install
+
+# Copy source code and config files
+COPY tsconfig.json ./
+COPY prisma ./prisma
+COPY src ./src
+
+# Generate Prisma client and build typescript
+RUN npx prisma generate
+RUN npm run build
+
+EXPOSE 5000
+
+CMD ["npm", "run", "start:api"]

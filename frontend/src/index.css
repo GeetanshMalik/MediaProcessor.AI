@@ -1,0 +1,8 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Core global customizations */
+html, body, #root {
+  height: 100%;
+}
