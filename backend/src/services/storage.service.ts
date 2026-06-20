@@ -7,7 +7,8 @@ export class StorageService {
    */
   static getFileUrl(filename: string): string {
     const port = process.env.PORT || 5000;
-    return `http://localhost:${port}/uploads/${filename}`;
+    const backendUrl = process.env.BACKEND_URL || `http://localhost:${port}`;
+    return `${backendUrl}/uploads/${filename}`;
   }
 
   /**

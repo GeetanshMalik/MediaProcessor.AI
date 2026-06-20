@@ -4,7 +4,7 @@
   "description": "API and Worker service for AI-Powered Media Processing Platform",
   "main": "dist/api.js",
   "scripts": {
-    "build": "tsc",
+    "build": "prisma generate && tsc",
     "start:api": "npx prisma db push && node dist/api.js",
     "start:worker": "node dist/worker.js",
     "dev:api": "tsx watch src/api.ts",

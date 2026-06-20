@@ -27,6 +27,7 @@ export const connection = {
   password: parsedConfig.password,
   username: parsedConfig.username,
   maxRetriesPerRequest: null, // Required by BullMQ
+  ...(REDIS_URL.startsWith('rediss://') ? { tls: {} } : {}),
 };
 
 export default connection;
