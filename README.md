@@ -31,7 +31,7 @@ graph TD
     API -->|5. Queue Job ID & Image URL| Queue[(Redis Queue / BullMQ)]
     API -->|6. Return Job ID Immediately| Client
     
-    Worker[Worker Web Service (Render Free Tier)] -->|7. Pull Job from Queue| Queue
+    Worker["Worker Web Service (Render Free Tier)"] -->|7. Pull Job from Queue| Queue
     Worker -->|8. Fetch Object from S3| Storage
     Worker -->|9. Image Captioning| HF[Hugging Face Hosted Inference]
     Worker -->|10. Object Detection| HF
