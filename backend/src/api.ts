@@ -9,6 +9,22 @@ import path from 'path';
 
 dotenv.config();
 
+// Basic environment validation
+const REQUIRED_ENV_VARS = ['DATABASE_URL', 'REDIS_URL', 'JWT_SECRET', 'HUGGINGFACE_API_KEY'];
+for (const envVar of REQUIRED_ENV_VARS) {
+  if (!process.env[envVar] || process.env[envVar]?.startsWith('your_') || process.env[envVar]?.includes('placeholder')) {
+    console.warn(`[API Server] [WARNING] Environment variable "${envVar}" is missing or using a default placeholder!`);
+  }
+}
+if (process.env.STORAGE_PROVIDER === 'r2' || process.env.STORAGE_PROVIDER === 's3') {
+  const S3_VARS = ['S3_ACCESS_KEY_ID', 'S3_SECRET_ACCESS_KEY', 'S3_ENDPOINT', 'S3_BUCKET_NAME'];
+  for (const envVar of S3_VARS) {
+    if (!process.env[envVar] || process.env[envVar]?.startsWith('your_') || process.env[envVar]?.includes('placeholder')) {
+      console.warn(`[API Server] [WARNING] Storage provider is set to "${process.env.STORAGE_PROVIDER}" but S3 configuration "${envVar}" is missing or placeholder!`);
+    }
+  }
+}
+
 const app = express();
 const PORT = process.env.PORT || 5000;
 
@@ -38,27 +54,25 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', service: 'api' });
 });
 
-// Conditionally run the background worker listener inside the API process (useful for free tier hosting like Render)
-if (process.env.RUN_WORKER === 'true') {
-  console.log('[API Server] RUN_WORKER is set to true. Initializing background worker inside API process...');
-  import('./workers/job.worker')
-    .then(() => {
-      console.log('[API Server] Worker listener initialized successfully.');
-      return import('./workers/job-recovery');
-    })
-    .then(({ recoverInterruptedJobs }) => {
-      return recoverInterruptedJobs();
-    })
-    .then(({ recoveredCount }) => {
-      if (recoveredCount > 0) {
-        console.log(`[API Server] Re-queued ${recoveredCount} pending or interrupted processing job(s).`);
-      }
-    })
-    .catch((error) => {
-      console.error('[API Server] Failed to initialize worker or recover jobs:', error);
-    });
-}
-
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`[API Server] Running on port ${PORT}`);
 });
+
+// Graceful shutdown handling
+const handleGracefulShutdown = (signal: string) => {
+  console.log(`[API Server] Received ${signal}. Starting graceful shutdown...`);
+  server.close(async () => {
+    try {
+      const { prisma } = await import('./database/db');
+      await prisma.$disconnect();
+      console.log('[API Server] Successfully closed database connection.');
+    } catch (err: any) {
+      console.error('[API Server] Error disconnecting Prisma:', err.message);
+    }
+    console.log('[API Server] Server process stopped.');
+    process.exit(0);
+  });
+};
+
+process.on('SIGINT', () => handleGracefulShutdown('SIGINT'));
+process.on('SIGTERM', () => handleGracefulShutdown('SIGTERM'));

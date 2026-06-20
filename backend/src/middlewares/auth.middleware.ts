@@ -7,8 +7,15 @@ import { verifyToken } from '../utils/auth';
 export function authMiddleware(req: Request, res: Response, next: NextFunction) {
   try {
     const authHeader = req.headers.authorization;
+    let token = '';
 
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      token = authHeader.split(' ')[1];
+    } else if (req.query.token && typeof req.query.token === 'string') {
+      token = req.query.token;
+    }
+
+    if (!token) {
       return res.status(401).json({
         error: {
           code: 'UNAUTHORIZED',
@@ -17,15 +24,6 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction) 
       });
     }
 
-    const token = authHeader.split(' ')[1];
-    if (!token) {
-      return res.status(401).json({
-        error: {
-          code: 'UNAUTHORIZED',
-          message: 'Invalid authorization token format.'
-        }
-      });
-    }
 
     const decodedUser = verifyToken(token);
     req.user = decodedUser;

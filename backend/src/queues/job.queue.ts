@@ -11,7 +11,7 @@ export const imageQueue = new Queue(QUEUE_NAME, {
 /**
  * Push an image processing job into the Redis-backed BullMQ queue
  */
-export async function addJobToQueue(jobId: string): Promise<void> {
+export async function addJobToQueue(jobId: string, imageReference: string): Promise<void> {
   try {
     const existingJob = await imageQueue.getJob(jobId);
 
@@ -28,7 +28,7 @@ export async function addJobToQueue(jobId: string): Promise<void> {
 
     await imageQueue.add(
       'process-image',
-      { jobId },
+      { jobId, imageReference },
       {
         jobId,
         attempts: 3, // Retry up to 3 times on failure
@@ -40,7 +40,7 @@ export async function addJobToQueue(jobId: string): Promise<void> {
         removeOnFail: false // Keep failed jobs for inspection
       }
     );
-    console.log(`[Queue] Successfully enqueued Job ID: ${jobId}`);
+    console.log(`[Queue] Successfully enqueued Job ID: ${jobId} with reference: ${imageReference}`);
   } catch (error) {
     console.error(`[Queue] Failed to enqueue Job ID ${jobId}:`, error);
     throw error;

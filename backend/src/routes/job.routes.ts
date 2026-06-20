@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { uploadJob, getJobs, getJobById, retryJob, deleteJob, getJobStats } from '../controllers/job.controller';
+import { uploadJob, getJobs, getJobById, retryJob, deleteJob, getJobStats, getJobImage } from '../controllers/job.controller';
 import { authMiddleware } from '../middlewares/auth.middleware';
 import { uploadMiddleware } from '../middlewares/upload.middleware';
 
@@ -13,6 +13,7 @@ router.post('/upload', uploadMiddleware, uploadJob);
 router.get('/stats', getJobStats);
 router.get('/', getJobs);
 router.get('/:id', getJobById);
+router.get('/:id/image', getJobImage);
 router.post('/:id/retry', retryJob);
 router.delete('/:id', deleteJob);
 

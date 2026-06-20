@@ -164,7 +164,7 @@ export const Dashboard: React.FC = () => {
                     {/* Thumbnail */}
                     <div className="relative aspect-video w-full bg-slate-100 overflow-hidden border-b border-slate-100">
                       <img
-                        src={job.fileUrl}
+                        src={`${job.fileUrl}?token=${localStorage.getItem('token') || ''}`}
                         alt="Media asset"
                         className="h-full w-full object-cover group-hover:scale-[1.02] transition duration-300"
                         onError={(e) => {
@@ -291,7 +291,7 @@ export const Dashboard: React.FC = () => {
               {/* Full Image */}
               <div className="flex items-center justify-center bg-slate-100 rounded-xl overflow-hidden aspect-video border border-slate-200/50">
                 <img
-                  src={selectedJob.fileUrl}
+                  src={`${selectedJob.fileUrl}?token=${localStorage.getItem('token') || ''}`}
                   alt="Full Media"
                   className="max-h-[30vh] object-contain"
                   onError={(e) => {

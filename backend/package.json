@@ -5,8 +5,9 @@
   "main": "dist/api.js",
   "scripts": {
     "build": "prisma generate && tsc",
-    "start:api": "npx prisma db push && node dist/api.js",
+    "start:api": "node dist/api.js",
     "start:worker": "node dist/worker.js",
+    "db:push": "prisma db push",
     "dev:api": "tsx watch src/api.ts",
     "dev:worker": "tsx watch src/worker.ts",
     "prisma:generate": "prisma generate",
@@ -16,6 +17,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1073.0",
     "@prisma/client": "^5.12.1",
     "axios": "^1.6.8",
     "bcryptjs": "^2.4.3",

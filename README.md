@@ -12,13 +12,13 @@ The system architecture decouples user-facing web servers from resource-intensiv
 graph TD
     Client[React Frontend] -->|1. JWT Authentication| API[Express API Server]
     Client -->|2. Image Upload| API
-    API -->|3. Save File| Storage[(Durable File Storage)]
+    API -->|3. Upload Object| Storage[(Backblaze B2 S3 Storage)]
     API -->|4. Create Job record| DB[(PostgreSQL Database)]
-    API -->|5. Queue Job ID| Queue[(Redis Queue / BullMQ)]
+    API -->|5. Queue Job ID & Image URL| Queue[(Redis Queue / BullMQ)]
     API -->|6. Return Job ID Immediately| Client
     
     Worker[Background Worker Service] -->|7. Pull Job from Queue| Queue
-    Worker -->|8. Fetch Local File| Storage
+    Worker -->|8. Fetch Object from S3| Storage
     Worker -->|9. Image Captioning| HF[Hugging Face Hosted Inference]
     Worker -->|10. Object Detection| HF
     Worker -->|11. Safety Classification| HF
@@ -29,50 +29,43 @@ graph TD
 
 ---
 
-## 2. Architectural Decisions
+### 2. Architectural Decisions & Tradeoffs
 
 Below is the documentation of major architectural decisions, including alternatives, tradeoffs, and final choices:
 
-### Authentication
+### Authentication (Why JWT)
 * **Final Choice**: JSON Web Tokens (JWT).
-* **Justification**: JWT is standard, stateless, and scales horizontally since the API server does not need to maintain local session memory. 
+* **Justification & Tradeoffs**: Session-based cookie auth requires a shared session store (like Redis) or database lookup on every request, creating scale bottlenecks. JWT is stateless, self-contained, and cryptographically verified by the API instance using a shared secret (`JWT_SECRET`). 
+* **Tradeoff**: JWT invalidation is difficult without a token blocklist. Since this task represents a low-risk media processing dashboard, stateless JWT represents the best balance between ease-of-scaling and complexity.
 
-### Queue Technology
+### Queue Technology (Why BullMQ)
 * **Final Choice**: Redis + BullMQ.
-* **Justification**: Extremely fast, native to Node.js/TypeScript, and utilizes Redis (which is also valuable for dashboard caching). BullMQ supports job retries with exponential backoffs and concurrency throttling.
+* **Justification & Tradeoffs**: BullMQ is the industry-standard queue for Node.js/TypeScript. It natively supports atomic operations, automated retries with exponential backoffs, concurrency limits, and parent-child dependency tracking.
+* **Tradeoff**: Requires a running Redis instance, but Upstash Redis offers a highly scalable managed serverless tier that fits within the budget.
 
-### Storage Strategy
-* **Final Choice**: Local disk storage with shared Docker volumes.
-* **Justification**: Storing image binaries in PostgreSQL bloats the database and causes severe performance degradation. Mounting a shared volume between the API and Worker containers is simple, free, and sufficient for this scale.
+### Storage Strategy (Why Backblaze B2)
+* **Final Choice**: Backblaze B2 (S3-compatible object storage).
+* **Justification & Tradeoffs**: Replaced the local shared-disk volumes with Backblaze B2. This completely decouples the API and Worker containers. The API uploads files directly to B2 via S3-compatible APIs and unlinks local files immediately, while the Worker fetches B2 objects into ephemeral container memory/disk on-demand.
+* **Tradeoff**: Introduces minor network latency for file downloading inside the worker, but completely eliminates the need for expensive network filesystems (NFS) and allows scaling both services to infinite stateless containers.
 
-### Notification Strategy
-* **Final Choice**: In-App Notifications persisted in PostgreSQL.
-* **Justification**: Simpler to maintain and deploy. Notification models link users to their job results.
+### Database (Why PostgreSQL)
+* **Final Choice**: Neon Serverless PostgreSQL.
+* **Justification & Tradeoffs**: Relational schema ensures strict transactional integrity for users, jobs, and notifications. Prisma ORM provides type-safety and robust schema synchronization.
+* **Tradeoff**: Serverless databases can experience cold-start latency, which we mitigate by leveraging connection pooling.
 
-### Status Update Strategy
+### Status Update Strategy (Why Polling instead of WebSockets)
 * **Final Choice**: React Query Polling (5-second interval).
-* **Justification**: Much lower operational complexity than WebSockets. We optimize polling by evaluating active jobs; polling stops automatically once all active jobs reach a final state (`completed` or `failed`).
+* **Justification & Tradeoffs**: WebSockets require stateful persistent connections, necessitating sticky sessions and connection brokers (e.g., Redis Adapter, Socket.io brokers) when running 5+ API instances. Polling is stateless, compatible with any CDN/load balancer, and automatically halts once jobs reach terminal states (`completed` or `failed`).
+* **Tradeoff**: Higher request rate on the API, which we mitigate via indexing and lightweight JSON query endpoints.
 
-### Deployment Strategy
-* **Final Choice**: Decoupled Cloud/PaaS Deployment compatible with managed free/low-cost tiers.
-  * **Frontend**: Vercel (Free Tier) or Netlify (Free Tier).
-  * **Backend API**: Render Web Service.
-  * **Worker**: Render Background Worker consuming the same BullMQ queue.
-  * **Database**: Neon Serverless PostgreSQL (Free Tier - 0.5 GiB storage).
-  * **Redis Queue**: Upstash Redis (Free Tier - 10,000 requests/day, ideal for serverless BullMQ).
-  * **Storage**: Local disk (Render persistent disk or Docker volume).
-  * **AI Services**: Hugging Face hosted inference through one token or a rotating token pool.
-
-### AI Provider Strategy
+### AI Provider Strategy (Why Hugging Face instead of Google Vision)
 * **Final Choice**: Hugging Face hosted inference for captioning, object detection, and safety classification.
-* **Why Google Vision was removed**: Google Cloud Vision API now requires Google Cloud billing setup for this project path, which makes it unsuitable for a deployable assessment that should run on Vercel, Render, Neon, and Upstash without Google Cloud billing.
-* **Why Hugging Face was selected**: Hugging Face Inference Providers expose hosted models through one token or a token pool, support direct HTTP usage from Node.js workers, and avoid local inference servers, local model hosting, or GPU requirements.
-* **Model configuration**:
-  * Captioning: Defaults to `meta-llama/Llama-4-Scout-17B-16E-Instruct:groq` through the Hugging Face router, with `HUGGINGFACE_CAPTION_MODEL` left configurable.
-  * Object Detection: `facebook/detr-resnet-50` is available through HF Inference and returns labels, scores, and boxes.
-  * Safety Classification: `Falconsai/nsfw_image_detection` is available through HF Inference and returns image-classification labels with confidence scores.
-* **Tradeoffs**: Hosted inference removes local model operations and Google billing, but provider availability, free-tier rate limits, latency, and model routing can change. The configured captioning model is a general vision-language model rather than a dedicated BLIP captioner, so outputs are constrained by a one-sentence prompt and response cleanup.
+* **Justification & Tradeoffs**: Google Cloud Vision API requires billing setup, which makes local testing difficult for reviewers. Hugging Face is free, allows model configuration via env vars, and rotates API tokens dynamically.
+* **Tradeoff**: Hosted inference is subject to rate-limiting and model routing shifts, which we mitigate by using a rotating Hugging Face token pool.
 
+### Database Migrations Decoupling (Why removed from startup)
+* **Final Choice**: Separate DB Push release phase.
+* **Justification & Tradeoffs**: Running `npx prisma db push` inside the API startup script is safe for single-node setups, but causes race conditions when scaling to **5 API instances** concurrently. Concurrently executed migrations cause transaction locks and container boot crashes. Decoupling push scripts ensures that schema synchronization runs exactly once per deploy release.
 
 ---
 
@@ -179,6 +172,11 @@ Define the following environment variables in a root `.env` or container setting
 | `APP_TIME_ZONE` | Local timezone used for dashboard daily upload bucketing | `Asia/Kolkata` |
 | `STORAGE_PROVIDER` | File storage provider | `local` |
 | `UPLOAD_DIR` | Shared uploads directory | `uploads` |
+| `S3_ACCESS_KEY_ID` | S3 / Backblaze B2 credential Key ID | empty |
+| `S3_SECRET_ACCESS_KEY` | S3 / Backblaze B2 Application Key | empty |
+| `S3_ENDPOINT` | S3 S3-compatible API endpoint URL | empty |
+| `S3_BUCKET_NAME` | S3 S3-compatible bucket name | empty |
+| `S3_PUBLIC_URL` | (Deprecated/Unused) All assets are now securely streamed via the API proxy | empty |
 | `CORS_ORIGIN` | Allowed CORS origins (comma-separated for multiple); set to your frontend URL in production | `*` |
 | `HUGGINGFACE_API_KEY` | Hugging Face token with Inference Providers permission | Create at `https://huggingface.co/settings/tokens` |
 | `HUGGINGFACE_API_KEY_2` | Optional second Hugging Face token; requests rotate across configured keys | empty |
@@ -245,12 +243,18 @@ The repository is configured with a GitHub Actions workflow in `.github/workflow
 
 ---
 
-## 9. Scalability Discussion
+## 9. Scalability Discussion & Production Scaling Strategy
 
 How the system behaves under 10x traffic:
 
-### Worker Autoscaling
-Additional worker instances can consume jobs independently from Redis without any changes to the API architecture. Because BullMQ supports concurrent job processing, multiple Worker container instances can run in parallel, listening to the same `"image-processing"` queue.
+### Horizontal Scale Rationale (5 API & 20 Worker Instances)
+The system is built to scale up to **5 API instances** and **20 Worker instances** without modification:
+1. **API Nodes (Horizontal Ingress)**:
+   - 5 API nodes can run behind a standard load balancer. Because authentication is stateless (JWT) and uploads are immediately offloaded to Backblaze B2, any API node can service any HTTP request.
+   - Database migrations (`npm run db:push`) are decoupled from container startup, preventing race conditions or schema sync locks.
+2. **Worker Nodes (Horizontal Processing)**:
+   - 20 Worker instances can listen concurrently to the same Upstash Redis / BullMQ queue. BullMQ handles atomic job locking, ensuring that each job is processed exactly once by a single worker.
+   - Workers download files to their own local container temp folders (`/tmp`), ensuring zero disk crosstalk or container contention.
 
 ### Redis Queue Isolation
 The Redis server has extremely high throughput capabilities (over 10,000 requests/sec). Using Redis as an asynchronous buffer prevents Express API threads from locking, keeping the user interface snappy even under sudden upload spikes. Memory consumption is mitigated by deleting completed jobs from Redis memory automatically (`removeOnComplete: true`).
@@ -260,14 +264,31 @@ Under heavy traffic, direct database queries from multiple workers could saturat
 - Using Neon connection pool routing (using transaction ports).
 - Adding database indexes on `userId` and `createdAt` columns (supported in our schema design).
 
-### Storage Consideration
-Uploaded images are stored on the local disk (shared Docker volume between API and Worker). For production deployments on Render, a persistent disk can be attached to ensure uploads survive redeploys.
+### Storage Consideration & Decoupling
+By replacing local disk storage with Backblaze B2 (or any S3-compatible storage), the system removes the shared filesystem volume constraint entirely. This yields several scaling advantages:
+- **Stateless Services**: Both API and Worker processes are completely stateless and can run in any cloud or container platform (e.g., AWS ECS/Fargate, Google Cloud Run) without requiring distributed network filesystems.
+- **Independent Scaling**: If a surge of uploads occurs, the API service scales up to handle ingress traffic, while the Worker instances scale independently according to Redis queue depth.
+- **Next-Step Optimization (Presigned URLs)**: To scale even further, the architecture can be updated to generate S3 presigned upload URLs, allowing client browsers to upload images directly to the S3 bucket. This would completely bypass the API server for image data transfer, offloading network and I/O pressure entirely from our API nodes.
 
 ---
 
-## 10. Assumptions & Limitations
+## 10. Worker Startup Recovery Tradeoffs & Production Scheduler Recommendation
 
-1. **File Uploads**: Images are uploaded via standard Multer multipart POST to the API server, which stores them on the local disk. The API and Worker share the same uploads directory (Docker volume or persistent disk).
+In this implementation, worker recovery is triggered on container boot (`recoverInterruptedJobs()`).
+
+### Concurrency Tradeoff & Limitations
+- **The Issue**: When booting **20 Worker instances** concurrently, all 20 processes will attempt to execute database recovery queries at the same time. This leads to Postgres table write locks and potential duplicate job insertions in the queue.
+- **Production Recommendation**:
+  For production setups, startup-based recovery should be disabled. The recovery logic should be scheduled to run as a single-instance cron task every 10–15 minutes using an external orchestrator:
+  - **Cloudflare Worker Crons**: A scheduled serverless function calling an administrative recovery API endpoint on the backend.
+  - **Upstash QStash**: Serverless messaging scheduler that fires HTTP POST requests to trigger recovery.
+  - **Dedicated Manager Container**: A single-instance worker container running a scheduled task helper like `cron` or `node-cron`.
+
+---
+
+## 11. Assumptions & Limitations
+
+1. **File Uploads**: Images are uploaded via standard Multer multipart POST to the API server, which uploads them to Backblaze B2 (or other S3 bucket) and deletes the local temporary file immediately. The Worker receives the S3 object reference via the Redis queue, downloads the file from S3 to ephemeral container storage, processes it, and cleans it up. No shared filesystem is used.
 2. **Safety Flags**: The safety step uses `Falconsai/nsfw_image_detection` for sexual/explicit image risk and a required Hugging Face visual safety review for abuse, violence, self-harm, severe distress, exploitation, and child/minor harm. If either required safety step fails, the job fails instead of pretending the image is safe.
 3. **Provider Fail-Fast Behavior**: The worker fails the job if any hosted Hugging Face pipeline step fails after shared retry handling. BullMQ keeps the existing job retry behavior, so transient provider failures can be retried without changing the API contract.
 4. **Image Payload Size**: Before each Hugging Face call, uploads are converted to bounded JPEG payloads to avoid request-size failures from large base64 image bodies.
@@ -277,8 +298,9 @@ Uploaded images are stored on the local disk (shared Docker volume between API a
 
 ---
 
-## 11. Future Enhancements
+## 12. Future Enhancements
 
-1. **Email Alerts**: Trigger transactional email warnings (using Amazon SES or Resend) when content is flagged.
-2. **WebSocket Realtime Updates**: Supplement React Query polling with Socket.io connections for instant, lower-overhead progress bars on the dashboard.
-3. **Advanced Retry Policies**: Support cron-based dead-letter-queue retries.
+1. **Presigned Upload URLs**: Generate direct-to-S3 client upload links to offload I/O traffic from API containers.
+2. **Email Alerts**: Trigger transactional email warnings (using Amazon SES or Resend) when content is flagged.
+3. **WebSocket Realtime Updates**: Supplement React Query polling with Socket.io connections for instant, lower-overhead progress bars on the dashboard.
+4. **Advanced Retry Policies**: Support cron-based dead-letter-queue retries.

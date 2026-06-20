@@ -2,11 +2,12 @@ import { Worker, Job as BullJob, UnrecoverableError } from 'bullmq';
 import { prisma } from '../database/db';
 import { connection } from '../config/redis';
 import { AIService } from '../services/ai.service';
+import { StorageService } from '../services/storage.service';
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
 
 const QUEUE_NAME = 'image-processing';
-const UPLOAD_DIR = process.env.UPLOAD_DIR || 'uploads';
 
 function isNonRetryableProviderError(message: string) {
   const nonRetryableMarkers = [
@@ -53,14 +54,14 @@ async function processImageJob(bullJob: BullJob) {
     data: { status: 'processing' }
   });
 
+  let localFilePath = '';
   try {
-    // Determine the local file path on the shared volume
-    const filename = path.basename(job.fileUrl);
-    const localFilePath = path.join(UPLOAD_DIR, filename);
+    const imageReference = bullJob.data.imageReference || job.fileUrl;
 
-    if (!fs.existsSync(localFilePath)) {
-      throw new Error(`Media file not found on disk at: ${localFilePath}`);
-    }
+    // Create a local temporary path in os.tmpdir() to download the file to (only downloaded from R2 if STORAGE_PROVIDER is r2)
+    const tempDestPath = path.join(os.tmpdir(), `work-${jobId}-${Date.now()}${path.extname(imageReference)}`);
+    console.log(`[Worker] Job ${jobId}: Fetching image file from storage: ${imageReference}`);
+    localFilePath = await StorageService.downloadFile(imageReference, tempDestPath);
 
     // --- AI Pipeline Step 1: Image Captioning ---
     console.log(`[Worker] Job ${jobId}: Generating image caption...`);
@@ -129,6 +130,16 @@ async function processImageJob(bullJob: BullJob) {
 
     // Re-throw so BullMQ handles retry strategies
     throw error;
+  } finally {
+    // Clean up temporary local file if it was created under os.tmpdir()
+    if (localFilePath && localFilePath.startsWith(os.tmpdir()) && fs.existsSync(localFilePath)) {
+      try {
+        fs.unlinkSync(localFilePath);
+        console.log(`[Worker] Job ${jobId}: Cleaned up temporary worker file: ${localFilePath}`);
+      } catch (err: any) {
+        console.warn(`[Worker] Job ${jobId}: Failed to clean up temp file: ${localFilePath}`, err.message);
+      }
+    }
   }
 }
 

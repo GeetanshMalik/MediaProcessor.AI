@@ -3,6 +3,16 @@ import { prisma } from '../database/db';
 import { StorageService } from '../services/storage.service';
 import { addJobToQueue } from '../queues/job.queue';
 
+export function serializeJob(job: any, req: Request) {
+  if (!job) return null;
+  const protocol = req.protocol;
+  const host = req.get('host');
+  return {
+    ...job,
+    fileUrl: `${protocol}://${host}/jobs/${job.id}/image`
+  };
+}
+
 const DEFAULT_DASHBOARD_TIME_ZONE = 'Asia/Kolkata';
 
 function getDashboardTimeZone() {
@@ -75,6 +85,18 @@ export async function uploadJob(req: Request, res: Response) {
     // Upload to storage and get public URL
     const fileUrl = await StorageService.uploadFile(filename, localFilePath);
 
+    // If using Cloudflare R2, clean up the local temp upload file on the API server immediately
+    if (process.env.STORAGE_PROVIDER === 'r2') {
+      try {
+        const fs = require('fs');
+        if (fs.existsSync(localFilePath)) {
+          fs.unlinkSync(localFilePath);
+        }
+      } catch (err: any) {
+        console.warn(`[API] Failed to clean up temp upload file: ${err.message}`);
+      }
+    }
+
     // Create database job in 'pending' status
     const job = await prisma.job.create({
       data: {
@@ -85,12 +107,12 @@ export async function uploadJob(req: Request, res: Response) {
     });
 
     // Enqueue the job for asynchronous processing
-    await addJobToQueue(job.id);
+    await addJobToQueue(job.id, job.fileUrl);
 
     return res.status(201).json({
       jobId: job.id,
       status: job.status,
-      fileUrl: job.fileUrl,
+      fileUrl: `${req.protocol}://${req.get('host')}/jobs/${job.id}/image`,
       message: 'Image uploaded successfully. Processing queued in background.'
     });
   } catch (error) {
@@ -135,8 +157,10 @@ export async function getJobs(req: Request, res: Response) {
       })
     ]);
 
+    const serializedJobs = jobs.map(job => serializeJob(job, req));
+
     return res.status(200).json({
-      jobs,
+      jobs: serializedJobs,
       pagination: {
         total,
         page,
@@ -194,7 +218,7 @@ export async function getJobById(req: Request, res: Response) {
       });
     }
 
-    return res.status(200).json({ job });
+    return res.status(200).json({ job: serializeJob(job, req) });
   } catch (error) {
     console.error('Get job details error:', error);
     return res.status(500).json({
@@ -269,7 +293,7 @@ export async function retryJob(req: Request, res: Response) {
     });
 
     // Re-queue the job
-    await addJobToQueue(updatedJob.id);
+    await addJobToQueue(updatedJob.id, updatedJob.fileUrl);
 
     return res.status(200).json({
       jobId: updatedJob.id,
@@ -394,13 +418,15 @@ export async function getJobStats(req: Request, res: Response) {
       count: uploadCountsByDate.get(date) ?? 0
     }));
 
+    const serializedAllJobs = allJobs.map(job => serializeJob(job, req));
+
     return res.status(200).json({
       totalJobs,
       safeJobs,
       unsafeJobs,
       dashboardTimeZone,
       weeklyUploads,
-      allJobs
+      allJobs: serializedAllJobs
     });
   } catch (error) {
     console.error('Get job stats error:', error);
@@ -408,6 +434,68 @@ export async function getJobStats(req: Request, res: Response) {
       error: {
         code: 'INTERNAL_SERVER_ERROR',
         message: 'Could not fetch job statistics.'
+      }
+    });
+  }
+}
+
+/**
+ * Stream job image from storage
+ */
+export async function getJobImage(req: Request, res: Response) {
+  try {
+    if (!req.user) {
+      return res.status(401).json({
+        error: {
+          code: 'UNAUTHORIZED',
+          message: 'Authentication is required.'
+        }
+      });
+    }
+
+    const { id } = req.params;
+
+    const job = await prisma.job.findUnique({
+      where: { id }
+    });
+
+    if (!job) {
+      return res.status(404).json({
+        error: {
+          code: 'JOB_NOT_FOUND',
+          message: `Job with ID ${id} not found.`
+        }
+      });
+    }
+
+    // Safeguard ownership
+    if (job.userId !== req.user.id) {
+      return res.status(403).json({
+        error: {
+          code: 'FORBIDDEN',
+          message: 'You do not have permission to access this job\'s image.'
+        }
+      });
+    }
+
+    const path = require('path');
+    const filename = path.basename(job.fileUrl);
+    
+    await StorageService.streamFile(filename, res);
+  } catch (error: any) {
+    console.error('Get job image error:', error);
+    if (error.code === 'NoSuchKey' || error.message.includes('not found') || error.message.includes('ENOENT')) {
+      return res.status(404).json({
+        error: {
+          code: 'FILE_NOT_FOUND',
+          message: 'The requested image file was not found in storage.'
+        }
+      });
+    }
+    return res.status(500).json({
+      error: {
+        code: 'INTERNAL_SERVER_ERROR',
+        message: 'Could not retrieve image from storage.'
       }
     });
   }

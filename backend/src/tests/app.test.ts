@@ -293,8 +293,8 @@ describe('Worker Interrupted Job Recovery', () => {
     const jobUpdateMock = prisma.job.update as unknown as ReturnType<typeof vi.fn>;
 
     jobFindManyMock.mockResolvedValue([
-      { id: 'pending-job', status: 'pending', updatedAt: new Date('2026-06-20T00:59:00.000Z') },
-      { id: 'stale-processing-job', status: 'processing', updatedAt: new Date('2026-06-20T00:40:00.000Z') }
+      { id: 'pending-job', status: 'pending', fileUrl: 'http://example.com/pending.jpg', updatedAt: new Date('2026-06-20T00:59:00.000Z') },
+      { id: 'stale-processing-job', status: 'processing', fileUrl: 'http://example.com/stale.jpg', updatedAt: new Date('2026-06-20T00:40:00.000Z') }
     ]);
     jobUpdateMock.mockResolvedValue({});
 
@@ -325,13 +325,13 @@ describe('Worker Interrupted Job Recovery', () => {
     expect(bullQueueAddMock).toHaveBeenNthCalledWith(
       1,
       'process-image',
-      { jobId: 'pending-job' },
+      { jobId: 'pending-job', imageReference: 'http://example.com/pending.jpg' },
       expect.objectContaining({ jobId: 'pending-job' })
     );
     expect(bullQueueAddMock).toHaveBeenNthCalledWith(
       2,
       'process-image',
-      { jobId: 'stale-processing-job' },
+      { jobId: 'stale-processing-job', imageReference: 'http://example.com/stale.jpg' },
       expect.objectContaining({ jobId: 'stale-processing-job' })
     );
   });
