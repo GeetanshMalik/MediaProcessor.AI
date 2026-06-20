@@ -43,8 +43,6 @@ graph TD
   - **Single Language Ecosystem**: Allows shared TypeScript types and data structures across the API, Worker, and Frontend (e.g., sharing the OpenAPI model schemas).
   - **IO-Bound Performance**: The API server's primary bottleneck is handling concurrent multipart uploads, database transactions, and queue enqueueing. Node’s event loop performs exceptionally well under high I/O throughput.
   - **Prisma Integration**: Prisma is one of the most mature ORMs for TypeScript, providing instant type safety and database auto-completion.
-* **Why not Python/FastAPI**: FastAPI is excellent for AI pipelines, but since we are delegating the actual AI inference calls to remote cloud endpoints (Hugging Face or Google Vision), the worker is primarily performing I/O work (downloading from S3, posting to AI API, updating PostgreSQL). Node.js fits this I/O-heavy profile perfectly.
-* **Why not NestJS**: NestJS is highly structured but adds unnecessary boilerplate and architectural overhead for a microservice of this scale. Express is lightweight, highly configurable, and boots in milliseconds.
 
 ### B. Database: PostgreSQL (PERN Stack) vs. MongoDB (MERN Stack)
 * **Options Considered**: PostgreSQL (relational), MongoDB (document-based).
