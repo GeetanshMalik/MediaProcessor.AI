@@ -25,7 +25,7 @@ if (process.env.STORAGE_PROVIDER === 'r2' || process.env.STORAGE_PROVIDER === 's
   }
 }
 
-const app = express();
+export const app = express();
 const PORT = process.env.PORT || 5000;
 
 const corsOrigin = process.env.CORS_ORIGIN || '*';
@@ -54,25 +54,35 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', service: 'api' });
 });
 
-const server = app.listen(PORT, () => {
-  console.log(`[API Server] Running on port ${PORT}`);
-});
-
-// Graceful shutdown handling
-const handleGracefulShutdown = (signal: string) => {
-  console.log(`[API Server] Received ${signal}. Starting graceful shutdown...`);
-  server.close(async () => {
-    try {
-      const { prisma } = await import('./database/db');
-      await prisma.$disconnect();
-      console.log('[API Server] Successfully closed database connection.');
-    } catch (err: any) {
-      console.error('[API Server] Error disconnecting Prisma:', err.message);
-    }
-    console.log('[API Server] Server process stopped.');
-    process.exit(0);
+export function startApiServer() {
+  const server = app.listen(PORT, () => {
+    console.log(`[API Server] Running on port ${PORT}`);
   });
-};
 
-process.on('SIGINT', () => handleGracefulShutdown('SIGINT'));
-process.on('SIGTERM', () => handleGracefulShutdown('SIGTERM'));
+  // Graceful shutdown handling
+  const handleGracefulShutdown = (signal: string) => {
+    console.log(`[API Server] Received ${signal}. Starting graceful shutdown...`);
+    server.close(async () => {
+      try {
+        const { prisma } = await import('./database/db');
+        await prisma.$disconnect();
+        console.log('[API Server] Successfully closed database connection.');
+      } catch (err: any) {
+        console.error('[API Server] Error disconnecting Prisma:', err.message);
+      }
+      console.log('[API Server] Server process stopped.');
+      process.exit(0);
+    });
+  };
+
+  process.on('SIGINT', () => handleGracefulShutdown('SIGINT'));
+  process.on('SIGTERM', () => handleGracefulShutdown('SIGTERM'));
+
+  return server;
+}
+
+if (require.main === module) {
+  startApiServer();
+}
+
+export default app;

@@ -4,6 +4,20 @@ An asynchronous, queue-based media processing microservice platform. Authenticat
 
 ---
 
+## Live Deployment
+
+| Service | URL |
+| :--- | :--- |
+| Frontend Application | https://media-processor-ai.vercel.app |
+| API Service | https://mediaprocessor-ai.onrender.com |
+| Worker Service Health Endpoint | https://mediaprocessor-ai-1.onrender.com |
+| API Health Check | https://mediaprocessor-ai.onrender.com/health |
+| OpenAPI Spec | https://mediaprocessor-ai.onrender.com/api-docs/openapi.json |
+
+Production services are deployed as separate components: the React frontend runs on Vercel, the Express API and BullMQ worker run as independent Render services, PostgreSQL runs on Neon, Redis runs on Upstash, and uploaded images are stored in a private Backblaze B2 bucket.
+
+---
+
 ## 1. Architecture Diagram
 
 The system architecture decouples user-facing web servers from resource-intensive AI processing steps using a Redis-backed BullMQ message queue.
@@ -75,8 +89,9 @@ Below is the documentation of major architectural decisions, including alternati
 * **Backend**: Node.js, Express, TypeScript, Prisma ORM, JWT, Multer.
 * **Database & Caching**: PostgreSQL, Redis, BullMQ.
 * **AI Services**: Hugging Face hosted inference for captioning, object detection, and content safety.
+* **Storage**: Backblaze B2 private S3-compatible object storage.
 * **Containerization**: Docker, Docker Compose.
-* **Testing**: Vitest.
+* **Testing**: Vitest unit tests and Supertest API integration tests.
 
 ---
 
@@ -114,7 +129,7 @@ To run the application services locally on your host machine:
 
 ## 5. Docker Setup (Recommended)
 
-Spins up the entire stack (Express API, BullMQ Worker, PostgreSQL, and Redis) locally with a single command.
+Spins up the backend processing stack (Express API, BullMQ Worker, PostgreSQL, and Redis) locally with a single command. The frontend is started separately with Vite so reviewers can point it at either the local API or the deployed API.
 
 ### Prerequisites
 * Docker and Docker Compose installed.
@@ -146,11 +161,12 @@ Spins up the entire stack (Express API, BullMQ Worker, PostgreSQL, and Redis) lo
    ```bash
    docker-compose up --build
    ```
-3. Docker will compile the TypeScript source files, run Prisma pushes to synchronize Postgres, and launch all servers:
+3. Docker will compile the TypeScript source files and launch the backend services:
    * **Express API Server**: Accessible on `http://localhost:5000`
+   * **BullMQ Worker**: Runs as a separate service consuming Redis jobs
    * **PostgreSQL Database**: Port `5472` on host
    * **Redis Server**: Port `6379` on host
-4. Run the frontend locally (or inside Docker):
+4. Run the frontend locally:
    ```bash
    cd frontend
    npm install
@@ -205,13 +221,18 @@ To obtain tokens, create or sign in to a Hugging Face account, open **Settings -
 | :--- | :--- | :--- |
 | `VITE_API_URL` | Backend API base URL used by the React frontend at build time | `http://localhost:5000` |
 
-When deploying the frontend to Vercel/Netlify, set `VITE_API_URL` to your production backend URL (e.g., `https://api.yourdomain.com`).
+For the deployed Vercel frontend, `VITE_API_URL` is set to `https://mediaprocessor-ai.onrender.com`.
 
 ---
 
 ## 7. API Documentation
 
-Complete details are available in the OpenAPI format at `http://localhost:5000/api-docs/openapi.json`. Below is a summary:
+Complete details are available in OpenAPI format:
+
+* **Local**: `http://localhost:5000/api-docs/openapi.json`
+* **Production**: `https://mediaprocessor-ai.onrender.com/api-docs/openapi.json`
+
+Below is a summary:
 
 ### Authentication
 * `POST /auth/register` - Create user account (returns JWT).
@@ -235,15 +256,43 @@ Complete details are available in the OpenAPI format at `http://localhost:5000/a
 ## 8. CI/CD Workflow
 
 The repository is configured with a GitHub Actions workflow in `.github/workflows/ci-cd.yml`:
-1. Installs backend dependencies and compiles TS files.
-2. Installs frontend dependencies and builds Vite assets.
-3. Runs Prisma client validations.
-4. Executes the automated Vitest test suite (`npm run test` inside `backend`).
-5. Halts integration branch deployment if any step fails.
+1. Installs backend dependencies.
+2. Generates the Prisma client.
+3. Executes the automated backend test suite (`npm run test` inside `backend`), including Vitest unit tests and Supertest API integration tests.
+4. Compiles backend TypeScript.
+5. Installs frontend dependencies.
+6. Builds the Vite frontend assets.
+7. Halts integration branch deployment if any step fails.
 
 ---
 
-## 9. Scalability Discussion & Production Scaling Strategy
+## 9. Deployment Architecture
+
+```mermaid
+flowchart TD
+    Browser[Browser] --> Vercel[Vercel Frontend]
+    Vercel --> API[Render API Service]
+    API --> Neon[(Neon PostgreSQL)]
+    API --> Upstash[(Upstash Redis)]
+    API --> B2[(Backblaze B2 Private Bucket)]
+    Worker[Render Worker Service] --> Upstash
+    Worker --> B2
+    Worker --> HF[Hugging Face Inference]
+    Worker --> Neon
+    API --> Browser
+```
+
+* **Frontend**: Vercel static deployment at `https://media-processor-ai.vercel.app`.
+* **API**: Render Web Service at `https://mediaprocessor-ai.onrender.com`.
+* **Worker**: Independent Render Web Service at `https://mediaprocessor-ai-1.onrender.com`; it binds a lightweight HTTP endpoint for Render health checks while consuming BullMQ jobs in the background.
+* **Database**: Neon PostgreSQL.
+* **Queue**: Upstash Redis.
+* **Storage**: Backblaze B2 private bucket, accessed server-side through S3-compatible APIs.
+* **AI Provider**: Hugging Face hosted inference.
+
+---
+
+## 10. Scalability Discussion & Production Scaling Strategy
 
 How the system behaves under 10x traffic:
 
@@ -272,7 +321,7 @@ By replacing local disk storage with Backblaze B2 (or any S3-compatible storage)
 
 ---
 
-## 10. Worker Startup Recovery Tradeoffs & Production Scheduler Recommendation
+## 11. Worker Startup Recovery Tradeoffs & Production Scheduler Recommendation
 
 In this implementation, worker recovery is triggered on container boot (`recoverInterruptedJobs()`).
 
@@ -286,7 +335,7 @@ In this implementation, worker recovery is triggered on container boot (`recover
 
 ---
 
-## 11. Assumptions & Limitations
+## 12. Assumptions & Limitations
 
 1. **File Uploads**: Images are uploaded via standard Multer multipart POST to the API server, which uploads them to Backblaze B2 (or other S3 bucket) and deletes the local temporary file immediately. The Worker receives the S3 object reference via the Redis queue, downloads the file from S3 to ephemeral container storage, processes it, and cleans it up. No shared filesystem is used.
 2. **Safety Flags**: The safety step uses `Falconsai/nsfw_image_detection` for sexual/explicit image risk and a required Hugging Face visual safety review for abuse, violence, self-harm, severe distress, exploitation, and child/minor harm. If either required safety step fails, the job fails instead of pretending the image is safe.
@@ -298,7 +347,7 @@ In this implementation, worker recovery is triggered on container boot (`recover
 
 ---
 
-## 12. Future Enhancements
+## 13. Future Enhancements
 
 1. **Presigned Upload URLs**: Generate direct-to-S3 client upload links to offload I/O traffic from API containers.
 2. **Email Alerts**: Trigger transactional email warnings (using Amazon SES or Resend) when content is flagged.
