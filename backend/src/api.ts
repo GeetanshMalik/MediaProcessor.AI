@@ -38,6 +38,27 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', service: 'api' });
 });
 
+// Conditionally run the background worker listener inside the API process (useful for free tier hosting like Render)
+if (process.env.RUN_WORKER === 'true') {
+  console.log('[API Server] RUN_WORKER is set to true. Initializing background worker inside API process...');
+  import('./workers/job.worker')
+    .then(() => {
+      console.log('[API Server] Worker listener initialized successfully.');
+      return import('./workers/job-recovery');
+    })
+    .then(({ recoverInterruptedJobs }) => {
+      return recoverInterruptedJobs();
+    })
+    .then(({ recoveredCount }) => {
+      if (recoveredCount > 0) {
+        console.log(`[API Server] Re-queued ${recoveredCount} pending or interrupted processing job(s).`);
+      }
+    })
+    .catch((error) => {
+      console.error('[API Server] Failed to initialize worker or recover jobs:', error);
+    });
+}
+
 app.listen(PORT, () => {
   console.log(`[API Server] Running on port ${PORT}`);
 });
