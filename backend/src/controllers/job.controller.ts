@@ -72,7 +72,7 @@ export async function uploadJob(req: Request, res: Response) {
 
     const { filename, path: localFilePath } = req.file;
 
-    // Upload to storage (Local or Cloudflare R2)
+    // Upload to storage and get public URL
     const fileUrl = await StorageService.uploadFile(filename, localFilePath);
 
     // Create database job in 'pending' status

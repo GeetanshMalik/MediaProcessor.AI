@@ -42,8 +42,8 @@ Below is the documentation of major architectural decisions, including alternati
 * **Justification**: Extremely fast, native to Node.js/TypeScript, and utilizes Redis (which is also valuable for dashboard caching). BullMQ supports job retries with exponential backoffs and concurrency throttling.
 
 ### Storage Strategy
-* **Final Choice**: Local volume sharing for Docker Dev; Cloudflare R2 for production.
-* **Justification**: Storing image binaries in PostgreSQL bloats the database and causes severe performance degradation. For local dev, mounting a shared volume is free and secure. In production, Cloudflare R2 provides zero egress fees.
+* **Final Choice**: Local disk storage with shared Docker volumes.
+* **Justification**: Storing image binaries in PostgreSQL bloats the database and causes severe performance degradation. Mounting a shared volume between the API and Worker containers is simple, free, and sufficient for this scale.
 
 ### Notification Strategy
 * **Final Choice**: In-App Notifications persisted in PostgreSQL.
@@ -60,7 +60,7 @@ Below is the documentation of major architectural decisions, including alternati
   * **Worker**: Render Background Worker consuming the same BullMQ queue.
   * **Database**: Neon Serverless PostgreSQL (Free Tier - 0.5 GiB storage).
   * **Redis Queue**: Upstash Redis (Free Tier - 10,000 requests/day, ideal for serverless BullMQ).
-  * **Storage**: Cloudflare R2 (Free Tier - 10 GB storage, zero egress fees) or local disk.
+  * **Storage**: Local disk (Render persistent disk or Docker volume).
   * **AI Services**: Hugging Face hosted inference through one token or a rotating token pool.
 
 ### AI Provider Strategy
@@ -177,7 +177,7 @@ Define the following environment variables in a root `.env` or container setting
 | `REDIS_URL` | Redis server connection URL | `redis://redis:6379` |
 | `JWT_SECRET` | Signing secret for user authentication | `super_secret_jwt_key_replace_in_prod` |
 | `APP_TIME_ZONE` | Local timezone used for dashboard daily upload bucketing | `Asia/Kolkata` |
-| `STORAGE_PROVIDER` | Local volume or Cloud storage | `local` (options: `local`, `r2`) |
+| `STORAGE_PROVIDER` | File storage provider | `local` |
 | `UPLOAD_DIR` | Shared uploads directory | `uploads` |
 | `CORS_ORIGIN` | Allowed CORS origins (comma-separated for multiple); set to your frontend URL in production | `*` |
 | `HUGGINGFACE_API_KEY` | Hugging Face token with Inference Providers permission | Create at `https://huggingface.co/settings/tokens` |
@@ -261,13 +261,13 @@ Under heavy traffic, direct database queries from multiple workers could saturat
 - Adding database indexes on `userId` and `createdAt` columns (supported in our schema design).
 
 ### Storage Consideration
-For local dev, disk storage is used. For production, Cloudflare R2 has infinite capacity scaling and zero egress fees, shifting massive image download/upload bandwidth costs away from our server compute clusters.
+Uploaded images are stored on the local disk (shared Docker volume between API and Worker). For production deployments on Render, a persistent disk can be attached to ensure uploads survive redeploys.
 
 ---
 
 ## 10. Assumptions & Limitations
 
-1. **R2 Pre-signed Uploads**: In production, to prevent the backend API from acting as a network proxy for heavy files, we assume frontend clients will fetch a pre-signed URL from our API first, and upload directly to Cloudflare R2. However, for assessment validation, we implement a standard direct Multer API upload that works out-of-the-box locally.
+1. **File Uploads**: Images are uploaded via standard Multer multipart POST to the API server, which stores them on the local disk. The API and Worker share the same uploads directory (Docker volume or persistent disk).
 2. **Safety Flags**: The safety step uses `Falconsai/nsfw_image_detection` for sexual/explicit image risk and a required Hugging Face visual safety review for abuse, violence, self-harm, severe distress, exploitation, and child/minor harm. If either required safety step fails, the job fails instead of pretending the image is safe.
 3. **Provider Fail-Fast Behavior**: The worker fails the job if any hosted Hugging Face pipeline step fails after shared retry handling. BullMQ keeps the existing job retry behavior, so transient provider failures can be retried without changing the API contract.
 4. **Image Payload Size**: Before each Hugging Face call, uploads are converted to bounded JPEG payloads to avoid request-size failures from large base64 image bodies.
