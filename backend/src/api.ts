@@ -50,6 +50,17 @@ app.get('/api-docs/openapi.json', (req, res) => {
   res.sendFile(path.join(__dirname, '../openapi.json'));
 });
 
+app.get('/', (req, res) => {
+  res.json({
+    message: 'Welcome to the AI-Powered Media Processing API',
+    status: 'ok',
+    endpoints: {
+      health: '/health',
+      openapi: '/api-docs/openapi.json'
+    }
+  });
+});
+
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', service: 'api' });
 });
