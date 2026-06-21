@@ -1,4 +1,4 @@
-# AI-Powered Media Processing Microservice - Final Engineering Report
+# AI-Powered Media Processing Microservice
 
 ## 1. Executive Summary
 
@@ -270,7 +270,7 @@ The test suite is intentionally focused on the highest-value backend requirement
 
 ### What is tested
 
-Existing unit-level coverage:
+unit-level coverage:
 
 - Password hashing and JWT signing/verification.
 - Safety classification mapping.
@@ -282,7 +282,7 @@ Existing unit-level coverage:
 - Worker interrupted-job recovery.
 - Dashboard date bucketing.
 
-New Supertest integration coverage:
+Supertest integration coverage:
 
 - User registration returns a JWT.
 - Login returns a JWT.
@@ -300,18 +300,6 @@ New Supertest integration coverage:
 ### Why these tests were prioritized
 
 The PDF requirements focus on authentication, upload validation, queueing, worker behavior, retry, ownership, notifications, and dashboard state. The highest-value confidence gap was not frontend rendering; it was whether the API contract enforces the product and security rules. Supertest integration tests give reviewer-visible confidence without requiring live Postgres, Redis, Backblaze, or Hugging Face in CI.
-
-### What is not tested
-
-- Live Backblaze B2 upload/download in CI.
-- Live Hugging Face inference in CI.
-- Real Redis/BullMQ integration with a running Redis instance.
-- Real PostgreSQL integration with migrations.
-- Browser-level frontend tests.
-
-### Why these are not currently tested
-
-Live provider tests would require secrets, network access, and external service reliability. That makes CI slower and more fragile for a 48-hour take-home. The current test suite mocks infrastructure boundaries and verifies application behavior around those boundaries.
 
 ### Future testing improvements
 
